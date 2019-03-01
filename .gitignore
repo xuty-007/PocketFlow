@@ -1,9 +1,11 @@
+*.zip
 *.pyc
 *.swp
 main.py
 logs
 models
 models_*
+best
 automl_output_*
 .pylint_results
 start_multi.sh
@@ -12,3 +14,6 @@ path.conf
 nvidia-smi-dump
 ssd_outputs
 dump
+\.data/*
+\.data/*.pickle
+
