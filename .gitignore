@@ -15,5 +15,6 @@ nvidia-smi-dump
 ssd_outputs
 dump
 \.data/*
-\.data/*.pickle
+\.idea/*
+
 
