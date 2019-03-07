@@ -26,8 +26,8 @@ from utils.multi_gpu_wrapper import MultiGpuWrapper as mgw
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_float('nb_epochs_rat', 1.0, '# of training epochs\'s ratio')
-tf.app.flags.DEFINE_float('lrn_rate_init', 1e-1, 'initial learning rate')
-tf.app.flags.DEFINE_float('batch_size_norm', 128, 'normalization factor of batch size')
+tf.app.flags.DEFINE_float('lrn_rate_init', 1e-4, 'initial learning rate')
+tf.app.flags.DEFINE_float('batch_size_norm', 32, 'normalization factor of batch size')
 tf.app.flags.DEFINE_float('momentum', 0.9, 'momentum coefficient')
 tf.app.flags.DEFINE_float('loss_w_dcy', 3e-4, 'weight decaying loss\'s coefficient')
 
@@ -48,9 +48,7 @@ def forward_fn(inputs, data_format):
   cell = tf.nn.rnn_cell.BasicLSTMCell(300)
 
   inputs, _ = tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32)
-  inputs = tf.layers.dense(inputs[-1], 2,
-                           kernel_initializer=tf.random_normal_initializer(),
-                           bias_initializer=tf.random_normal_initializer())
+  inputs = tf.layers.dense(inputs[:, -1, :], FLAGS.nb_classes)
 
   return inputs
 
@@ -93,8 +91,9 @@ class ModelHelper(AbstractModelHelper):
 
     loss = tf.losses.softmax_cross_entropy(labels, outputs)
     # loss += FLAGS.loss_w_dcy * tf.add_n([tf.nn.l2_loss(var) for var in trainable_vars])
-    accuracy = tf.reduce_mean(
-      tf.cast(tf.equal(tf.argmax(labels, axis=1), tf.argmax(outputs, axis=1)), tf.float32))
+    _, accuracy = tf.metrics.accuracy(labels=tf.argmax(labels, axis=-1),
+                                      predictions=tf.argmax(tf.nn.softmax(outputs), axis=-1))
+
     metrics = {'accuracy': accuracy}
 
     return loss, metrics
