@@ -36,6 +36,7 @@ _WEIGHTS_VARIABLE_NAME = "kernel"
 SkipLSTMStateTuple = collections.namedtuple("SkipLSTMStateTuple", ("c", "h", "update_prob", "cum_update_prob"))
 SkipLSTMOutputTuple = collections.namedtuple("SkipLSTMOutputTuple", ("h", "state_gate"))
 LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
+GRUStateTuple = lambda x: x
 
 SkipGRUStateTuple = collections.namedtuple("SkipGRUStateTuple", ("h", "update_prob", "cum_update_prob"))
 SkipGRUOutputTuple = collections.namedtuple("SkipGRUOutputTuple", ("h", "state_gate"))
@@ -91,23 +92,28 @@ class SkipRNNCell(LayerRNNCell):
     self._forget_bias = cell._forget_bias
     self.input_ops = []
     self.output_ops = []
-    self.__safe_check()
 
   @property
   def state_size(self):
-    return SkipLSTMStateTuple(self._num_units, self._num_units, 1, 1)
+    if self._cell_type == 0:
+      return SkipLSTMStateTuple(self._num_units, self._num_units, 1, 1)
+    if self._cell_type == 1:
+      return SkipGRUStateTuple(self._num_units, 1, 1)
 
   @property
   def output_size(self):
-    return SkipLSTMOutputTuple(self._num_units, 1)
+    if self._cell_type == 0:
+      return SkipLSTMOutputTuple(self._num_units, 1)
+    if self._cell_type == 1:
+      return SkipGRUOutputTuple(self._num_units, 1)
 
   def zero_state(self, batch_size, dtype):
-    c, h, _, _ = super(SkipRNNCell, self).zero_state(batch_size, dtype)
-    update_prob = tf.get_variable("initial_update_prob", shape=[batch_size, 1], trainable=False,
+    state = super(SkipRNNCell, self).zero_state(batch_size, dtype)
+    state[-1] = tf.get_variable("initial_update_prob", shape=[batch_size, 1], trainable=False,
                                   initializer=tf.ones_initializer())
-    cum_update_prob = tf.get_variable("initial_cum_update_prob", shape=[batch_size, 1],
+    state[-2] = tf.get_variable("initial_cum_update_prob", shape=[batch_size, 1],
                                       trainable=False, initializer=tf.zeros_initializer())
-    return SkipLSTMStateTuple(c, h, update_prob, cum_update_prob)
+    return state
 
   def build(self, inputs_shape):
     if inputs_shape[1].value is None:
@@ -137,22 +143,12 @@ class SkipRNNCell(LayerRNNCell):
     _, state_prev = self.cell(inputs, LSTMStateTuple(c_prev, h_prev))
     new_c_tilde, new_h_tilde = state_prev
 
-    # Compute value for the update prob
-    with tf.variable_scope('state_update_prob'):
-      new_update_prob_tilde = math_ops.matmul(c_prev, self._kernel)
-      new_update_prob_tilde = nn_ops.bias_add(new_update_prob_tilde, self._bias)
-      new_update_prob_tilde = math_ops.sigmoid(new_update_prob_tilde)
+    new_update_prob, new_cum_update_prob, update_gate = self._skip_RNNCell(
+      c_prev, cum_update_prob_prev,
+      update_prob_prev)
 
-    # Compute value for the update gate
-    cum_update_prob = cum_update_prob_prev + math_ops.minimum(update_prob_prev, 1. - cum_update_prob_prev)
-    update_gate = _binary_round(cum_update_prob)
-
-    # Apply update gate
     new_c = update_gate * new_c_tilde + (1. - update_gate) * c_prev
     new_h = update_gate * new_h_tilde + (1. - update_gate) * h_prev
-    new_update_prob = update_gate * new_update_prob_tilde + (1. - update_gate) * update_prob_prev
-    new_cum_update_prob = update_gate * 0. + (1. - update_gate) * cum_update_prob
-
     new_state = SkipLSTMStateTuple(new_c, new_h, new_update_prob, new_cum_update_prob)
     new_output = SkipLSTMOutputTuple(new_h, update_gate)
 
@@ -163,17 +159,17 @@ class SkipRNNCell(LayerRNNCell):
     _, state_prev = self.cell(inputs, h_prev)
     new_h_tilde = state_prev
 
-    new_update_prob, new_cum_update_prob, update_gate, new_h = self._skip_RNNCell(
+    new_update_prob, new_cum_update_prob, update_gate = self._skip_RNNCell(
       h_prev, cum_update_prob_prev,
-      update_prob_prev, [new_h_tilde],
-      [h_prev])
+      update_prob_prev)
 
+    new_h = update_gate * new_h_tilde + (1. - update_gate) * h_prev
     new_state = SkipGRUStateTuple(new_h, new_update_prob, new_cum_update_prob)
     new_output = SkipGRUOutputTuple(new_h, update_gate)
 
     return new_output, new_state
 
-  def _skip_RNNCell(self, p_prev, cum_update_prob_prev, update_prob_prev, new_var_tilde, var_prev):
+  def _skip_RNNCell(self, p_prev, cum_update_prob_prev, update_prob_prev):
     with tf.variable_scope('state_update_prob'):
       new_update_prob_tilde = math_ops.matmul(p_prev, self._kernel)
       new_update_prob_tilde = nn_ops.bias_add(new_update_prob_tilde, self._bias)
@@ -185,10 +181,7 @@ class SkipRNNCell(LayerRNNCell):
     update_gate = _binary_round(cum_update_prob)
 
     # Apply update gate
-    new_var = []
-    for new_v_tilde, v_prev in zip(new_var_tilde, var_prev):
-      new_var.append(update_gate * new_v_tilde + (1. - update_gate) * v_prev)
     new_update_prob = update_gate * new_update_prob_tilde + (1. - update_gate) * update_prob_prev
     new_cum_update_prob = update_gate * 0. + (1. - update_gate) * cum_update_prob
 
-    return new_update_prob, new_cum_update_prob, update_gate, *new_var
+    return new_update_prob, new_cum_update_prob, update_gate
