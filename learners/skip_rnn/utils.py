@@ -148,7 +148,6 @@ class SkipRNNCell(LayerRNNCell):
     update_gate = _binary_round(cum_update_prob)
 
     # Apply update gate
-    new_c, new_h = control_flow_ops.cond(update_gate, )
     new_c = update_gate * new_c_tilde + (1. - update_gate) * c_prev
     new_h = update_gate * new_h_tilde + (1. - update_gate) * h_prev
     new_update_prob = update_gate * new_update_prob_tilde + (1. - update_gate) * update_prob_prev
